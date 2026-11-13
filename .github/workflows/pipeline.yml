@@ -1,0 +1,62 @@
+name: Daily pipeline
+
+# Runs the whole pipeline (extract, load, transform, quality checks) once a day.
+#
+# GitHub's runners start empty on every run, so the data folder (raw JSON files and the DuckDB
+# database) is kept between runs in the GitHub Actions cache. Cache entries that nobody reads for
+# 7 days are deleted. If that ever happens the pipeline simply rebuilds everything on the next
+# run: it is incremental and idempotent, so starting from nothing is safe, only slower.
+#
+# Scheduled runs are best-effort: they can start late, and GitHub switches them off in a public
+# repository after 60 days with no repository activity. You can always run it by hand from the
+# Actions tab ("Run workflow").
+
+on:
+  schedule:
+    - cron: "17 5 * * *" # 05:17 UTC every day, away from the busy start of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-pipeline
+  cancel-in-progress: false # never cut a running pipeline short
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Restore data from the previous run
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: pipeline-data-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            pipeline-data-
+
+      - name: Run the pipeline
+        run: python -m weatherwh.run
+
+      # Save even if the pipeline reported a problem, so the progress that was made is not lost.
+      - name: Save data for the next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: pipeline-data-${{ github.run_id }}-${{ github.run_attempt }}

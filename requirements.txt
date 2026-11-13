@@ -1,0 +1,3 @@
+# Runtime dependencies.
+# The extract step uses only the Python standard library; DuckDB is used by the load step.
+duckdb>=1.0
